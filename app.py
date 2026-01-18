@@ -29,9 +29,13 @@ st.set_page_config(
     layout="wide"
 )
 
-# Progress container in session state
-if 'progress_container' not in st.session_state:
-    st.session_state.progress_container = None
+# Initialize progress placeholder in session state
+if 'progress_placeholder' not in st.session_state:
+    st.session_state.progress_placeholder = st.empty()
+
+# Max segments to display
+if 'max_displayed_segments' not in st.session_state:
+    st.session_state.max_displayed_segments = 5
 
 # Create results directory if it doesn't exist
 os.makedirs("results", exist_ok=True)
@@ -48,30 +52,42 @@ st.markdown("""
         border-radius: 10px;
         padding: 15px;
         margin: 10px 0;
-        background-color: #f8f9fa;
     }
     .play-format {
-        background-color: #e8f4fd;
         padding: 15px;
         border-radius: 8px;
         margin: 10px 0;
+        border: 2px solid #1f77b4;
         border-left: 4px solid #1f77b4;
+    }
+    .truncated-text {
+        max-height: 100px;
+        overflow: hidden;
+        position: relative;
+    }
+    .truncated-text:after {
+        content: "";
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        height: 30px;
+        background: linear-gradient(to top, white, transparent);
     }
     </style>
 """, unsafe_allow_html=True)
 
 # Function to update progress display
-def update_progress(container, current_segment, total_segments, speaker, segment_idx, segments_count):
+def update_progress(current_segment, total_segments, speaker, segment_idx, segments_count):
     """Update the progress display with a single set of progress elements"""
-    if container is not None:
-        with container:
-            # Clear previous content
-            container.empty()
-            
-            # Display current progress
-            st.markdown(f"**Transcribing {speaker}:** segment {segment_idx+1}/{segments_count}")
-            st.progress(current_segment / total_segments)
-            st.caption(f"Total: {current_segment}/{total_segments} segments")
+    if 'progress_placeholder' in st.session_state:
+        placeholder = st.session_state.progress_placeholder
+        placeholder.empty()  # Clear previous content
+        
+        # Display current progress
+        placeholder.markdown(f"**Transcribing {speaker}:** segment {segment_idx+1}/{segments_count}")
+        placeholder.progress(current_segment / total_segments)
+        placeholder.caption(f"Total: {current_segment}/{total_segments} segments")
 
 # Force state update function
 def force_state_update():
@@ -113,6 +129,16 @@ with st.sidebar:
                                   help="Duration of audio chunks for processing")
         sample_rate = st.selectbox("Sample Rate", [8000, 16000, 22050, 44100, 48000], index=1,
                                   help="Sample rate for audio processing")
+    
+    # Display settings
+    with st.expander("Display Settings"):
+        st.session_state.max_displayed_segments = st.slider(
+            "Max Segments to Display", 
+            min_value=1, 
+            max_value=20, 
+            value=5,
+            help="Maximum number of segments to show in Play Format view"
+        )
     
     # Debug mode
     debug_mode = st.checkbox("🐞 Debug Mode", value=False)
@@ -238,28 +264,22 @@ def process_audio(audio_bytes, target_sample_rate=16000):
 def process_full_pipeline(audio_path, waveform, sample_rate):
     """Run the full pipeline: diarization + ASR"""
     try:
-        # Create a container for progress updates
-        progress_container = st.container()
-        st.session_state.progress_container = progress_container
-        
         # Step 1: Speaker diarization
-        with progress_container:
-            with st.spinner("🎤 Performing speaker diarization..."):
-                diarization_kwargs = {}
-                if num_speakers > 0:
-                    diarization_kwargs["num_speakers"] = num_speakers
-                else:
-                    diarization_kwargs["min_speakers"] = min_speakers
-                    diarization_kwargs["max_speakers"] = max_speakers
-                
-                diarization_result = st.session_state.diarization_pipeline(
-                    {"waveform": waveform, "sample_rate": sample_rate},
-                    **diarization_kwargs
-                )
-        
+        with st.spinner("🎤 Performing speaker diarization..."):
+            diarization_kwargs = {}
+            if num_speakers > 0:
+                diarization_kwargs["num_speakers"] = num_speakers
+            else:
+                diarization_kwargs["min_speakers"] = min_speakers
+                diarization_kwargs["max_speakers"] = max_speakers
+            
+            diarization_result = st.session_state.diarization_pipeline(
+                {"waveform": waveform, "sample_rate": sample_rate},
+                **diarization_kwargs
+            )
+    
         # Step 2: Speech recognition by speaker segments
-        with progress_container:
-            st.spinner("💬 Transcribing speech by speakers...")
+        with st.spinner("💬 Transcribing speech by speakers..."):
             
             # Group segments by speaker
             speaker_segments = {}
@@ -274,7 +294,6 @@ def process_full_pipeline(audio_path, waveform, sample_rate):
             
             # Create initial progress display
             update_progress(
-                progress_container,
                 current_segment,
                 total_segments,
                 "Initial",
@@ -295,7 +314,6 @@ def process_full_pipeline(audio_path, waveform, sample_rate):
                     
                     # Update progress display
                     update_progress(
-                        progress_container,
                         current_segment,
                         total_segments,
                         speaker,
@@ -349,9 +367,9 @@ def process_full_pipeline(audio_path, waveform, sample_rate):
                         st.warning(f"⚠️ Error transcribing segment for {speaker} ({start:.1f}s-{end:.1f}s): {str(e)}")
                         continue
         
-        # Clear progress container
-        if st.session_state.progress_container is not None:
-            st.session_state.progress_container.empty()
+        # Clear progress display
+        if 'progress_placeholder' in st.session_state:
+            st.session_state.progress_placeholder.empty()
         
         # Create play format
         play_format = []
@@ -402,8 +420,8 @@ def process_full_pipeline(audio_path, waveform, sample_rate):
         return True
         
     except Exception as e:
-        if st.session_state.progress_container is not None:
-            st.session_state.progress_container.empty()
+        if 'progress_placeholder' in st.session_state:
+            st.session_state.progress_placeholder.empty()
         st.error(f"❌ Error in full pipeline: {str(e)}")
         return False
 
@@ -517,22 +535,56 @@ with col2:
         # Play format view
         st.subheader("🎭 Dialogue (Play Format)")
         
-        for item in result['play_format']:
-            timestamp_display = f"{item['timestamp']} " if item['timestamp'] else ""
-            st.markdown(f"""
-            <div class="play-format">
-                <strong>{item['number']:02d}. {timestamp_display}{item['speaker']}:</strong><br>
-                {item['text']}
-            </div>
-            """, unsafe_allow_html=True)
+        if 'play_format' in result:
+            # Show only first N segments
+            display_segments = result['play_format'][:st.session_state.max_displayed_segments]
+            
+            for item in display_segments:
+                timestamp_display = f"{item['timestamp']} " if item['timestamp'] else ""
+                st.markdown(f"""
+                <div class="play-format">
+                    <strong>{item['number']:02d}. {timestamp_display}{item['speaker']}:</strong><br>
+                    {item['text']}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Show ellipsis if there are more segments
+            if len(result['play_format']) > st.session_state.max_displayed_segments:
+                remaining = len(result['play_format']) - st.session_state.max_displayed_segments
+                st.markdown(f"""
+                <div class="play-format" style="text-align: center; color: #666; font-style: italic;">
+                    ... and <strong>{remaining}</strong> more segments (total: {len(result['play_format'])})
+                </div>
+                """, unsafe_allow_html=True)
+            
+            # Add expandable section for all segments
+            if len(result['play_format']) > st.session_state.max_displayed_segments:
+                with st.expander(f"🔍 Show all {len(result['play_format'])} segments"):
+                    for item in result['play_format']:
+                        timestamp_display = f"{item['timestamp']} " if item['timestamp'] else ""
+                        st.markdown(f"""
+                        <div class="play-format">
+                            <strong>{item['number']:02d}. {timestamp_display}{item['speaker']}:</strong><br>
+                            {item['text']}
+                        </div>
+                        """, unsafe_allow_html=True)
         
         # Individual speaker transcripts
         st.subheader("👤 Individual Speaker Transcripts")
         
+        # Option to show full transcript
+        show_full_transcription = st.checkbox("Show full transcript", value=False)
+        
         for speaker, segments in result['speaker_texts'].items():
             with st.expander(f"📝 {speaker} Full Transcript"):
-                full_text = " ".join([seg['text'] for seg in segments])
-                st.write(f"**{speaker}:** {full_text}")
+                if not show_full_transcription and len(segments) > 5:
+                    st.write(f"Showing first 5 segments out of {len(segments)}")
+                    for i, seg in enumerate(segments[:5], 1):
+                        st.write(f"**{i}.** {seg['text']}")
+                    st.caption(f"{len(segments) - 5} more segments. Check 'Show full transcript' to view all.")
+                else:
+                    full_text = " ".join([seg['text'] for seg in segments])
+                    st.write(f"**{speaker}:** {full_text}")
         
         # Download section
         st.subheader("📥 Download Results")
