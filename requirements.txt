@@ -1,0 +1,13 @@
+streamlit==1.32.0
+streamlit-mic-recorder==0.0.8
+pyannote.audio>=3.1.1
+torch==2.2.0
+torchaudio==2.2.0
+faster-whisper==1.0.2
+pydub==0.25.1
+soundfile==0.12.1
+librosa==0.10.1
+python-magic==0.4.27
+numpy==1.26.4
+ffmpeg-python==0.2.0
+huggingface-hub==0.19.4

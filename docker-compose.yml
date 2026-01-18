@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  speaker-diarization:
+    build:
+      context: .
+      args:
+        HF_TOKEN_BUILD: ${HF_TOKEN}
+        WHISPER_MODEL_SIZE_BUILD: ${WHISPER_MODEL_SIZE:-medium}
+    ports:
+      - "8501:8501"
+    volumes:
+      # Сохраняем результаты между запусками
+      - ./results:/app/results
+      
+      # КРИТИЧЕСКИ ВАЖНО: сохраняем кэш моделей Hugging Face
+      - huggingface_cache:/root/.cache/huggingface
+      
+      # Сохраняем кэш pip (опционально)
+      - pip_cache:/root/.cache/pip
+    env_file:
+      - .env
+    environment:
+      - HF_TOKEN=${HF_TOKEN}
+      - WHISPER_MODEL_SIZE=${WHISPER_MODEL_SIZE:-medium}
+      - DEVICE=${DEVICE:-cpu}
+      - DEFAULT_LANGUAGE=${DEFAULT_LANGUAGE:-ru}
+    restart: unless-stopped
+
+# Объявляем volumes для сохранения данных
+volumes:
+  huggingface_cache:
+  pip_cache:
